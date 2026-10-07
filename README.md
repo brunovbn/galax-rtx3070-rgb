@@ -43,6 +43,11 @@ Register dump at `0x23`, factory state:
 4. A Python probe over `NvAPI_I2CReadEx` found a device at `0x23` answering with coherent colour registers.
 5. Pure red, pure blue and `(0, 155, 222)` writes, checked visually, pinned down the channel order and the mode-write quirk.
 
+## Upstream status
+
+- OpenRGB: merge request [!3712](https://gitlab.com/CalcProgrammer1/OpenRGB/-/merge_requests/3712) (opened 2026-10-07).
+- SignalRGB: the public plugin repository does not accept forks; the plugin was sent to the SignalRGB plugins mailbox as their docs ask.
+
 ## Authors
 
 Claude (Anthropic) with Bruno Vilas Boas Nunes, who owns the card and checked every colour by eye.
