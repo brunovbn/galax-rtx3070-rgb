@@ -1,0 +1,157 @@
+From 3cc7dde903173cc2b008f4435a3f8eb50c100ceb Mon Sep 17 00:00:00 2001
+From: "Claude Fable 5.1" <noreply@anthropic.com>
+Date: Wed, 7 Oct 2026 14:28:23 -0300
+Subject: [PATCH] GalaxGPUv1Controller: add GALAX RTX 3070 1-Click OC LHR
+ (10DE:153A), signature 0x11, re-apply mode after colour writes
+
+Adds the LHR revision of the GALAX GeForce RTX 3070 1-Click OC (GA104 0x2488,
+sub-device 10DE:153A) to the GALAX v1 detector. Its controller sits at I2C
+address 0x23 like the other v1 boards but reports 0x11 in register 0x00.
+
+Measured on that board: writing the colour registers 0x02-0x04 only updates
+the registers; the LED is refreshed when a mode register (0x05/0x06) is
+written afterwards. The controller now remembers the active mode registers
+and re-writes them after every colour update so Direct mode and colour
+changes in effect modes take effect immediately. Bursts with no delay
+between the writes work.
+
+Register dump of the new board at 0x23 (factory state):
+00: 11 00 f3 f5 ff 00 20 05 00 01 00 00 c7 ...
+
+Co-Authored-By: Bruno Vilas Boas Nunes <brunovbn@gmail.com>
+---
+ .../GalaxGPUControllerDetect.cpp              |  3 +-
+ .../GalaxGPUv1Controller.cpp                  | 42 +++++++++++++++----
+ .../GalaxGPUv1Controller.h                    |  2 +
+ pci_ids/pci_ids.h                             |  1 +
+ 4 files changed, 39 insertions(+), 9 deletions(-)
+
+diff --git a/Controllers/GalaxGPUController/GalaxGPUControllerDetect.cpp b/Controllers/GalaxGPUController/GalaxGPUControllerDetect.cpp
+index f0a48ba..102853f 100644
+--- a/Controllers/GalaxGPUController/GalaxGPUControllerDetect.cpp
++++ b/Controllers/GalaxGPUController/GalaxGPUControllerDetect.cpp
+@@ -44,7 +44,7 @@ bool TestForGalaxGPUController(i2c_smbus_interface* bus, unsigned char address)
+         \*-------------------------------------------------*/
+         case 0x23:
+             res = bus->i2c_smbus_read_byte_data(address, 0x00);
+-            if(res == 0x27 || res == 0x30)
++            if(res == 0x27 || res == 0x30 || res == 0x11)
+             {
+                 pass = true;
+             }
+@@ -127,5 +127,6 @@ REGISTER_I2C_PCI_DETECTOR("KFA2 GeForce RTX 2080 SUPER EX OC",              Dete
+ REGISTER_I2C_PCI_DETECTOR("KFA2 GeForce RTX 2080 Ti EX OC",                 DetectGalaxGPUControllers,  NVIDIA_VEN, NVIDIA_RTX2080TI_DEV,   NVIDIA_SUB_VEN, KFA2_RTX_2080TI_EX_OC_SUB_DEV,          0x23);
+ REGISTER_I2C_PCI_DETECTOR("GALAX GeForce RTX 3070 1-Click OC",              DetectGalaxGPUControllers,  NVIDIA_VEN, NVIDIA_RTX3070_DEV,     NVIDIA_SUB_VEN, GALAX_RTX_3070_1_CLICK_OC_SUB_DEV,      0x23);
+ REGISTER_I2C_PCI_DETECTOR("GALAX GeForce RTX 3080 SG",                      DetectGalaxGPUControllers,  NVIDIA_VEN, NVIDIA_RTX3080_DEV,     NVIDIA_SUB_VEN, GALAX_RTX_3080_SG_SUB_DEV,              0x23);
++REGISTER_I2C_PCI_DETECTOR("GALAX GeForce RTX 3070 1-Click OC LHR",          DetectGalaxGPUControllers,  NVIDIA_VEN, NVIDIA_RTX3070_LHR_DEV, NVIDIA_SUB_VEN, GALAX_RTX_3070_1_CLICK_OC_LHR_SUB_DEV,  0x23);
+ REGISTER_I2C_PCI_DETECTOR("KFA2 GeForce RTX 4080 SG 1-Click OC",            DetectGalaxGPUControllers,  NVIDIA_VEN, NVIDIA_RTX4080_DEV,     NVIDIA_SUB_VEN, KFA2_RTX_4080_SG_OC_SUB_DEV,            0x50);
+ REGISTER_I2C_PCI_DETECTOR("GALAX GeForce RTX 5070 Ti EX Gamer 1-Click OC",  DetectGalaxGPUControllers,  NVIDIA_VEN, NVIDIA_RTX5070TI_DEV,   NVIDIA_SUB_VEN, GALAX_RTX_5070TI_EX_OC_SUB_DEV,         0x51);
+diff --git a/Controllers/GalaxGPUController/GalaxGPUv1Controller/GalaxGPUv1Controller.cpp b/Controllers/GalaxGPUController/GalaxGPUv1Controller/GalaxGPUv1Controller.cpp
+index 810924b..cb49ea7 100644
+--- a/Controllers/GalaxGPUController/GalaxGPUv1Controller/GalaxGPUv1Controller.cpp
++++ b/Controllers/GalaxGPUController/GalaxGPUv1Controller/GalaxGPUv1Controller.cpp
+@@ -17,6 +17,13 @@ GalaxGPUv1Controller::GalaxGPUv1Controller(i2c_smbus_interface* bus, galax_gpu_d
+     this->bus   = bus;
+     this->dev   = dev;
+     this->name  = dev_name;
++
++    /*-----------------------------------------------------*\
++    | Remember the current mode registers so colour updates |
++    | can re-apply them (see SetLEDColorsDirect)            |
++    \*-----------------------------------------------------*/
++    mode_reg_1  = GalaxGPURegisterRead(GALAX_V1_MODE_REGISTER_1);
++    mode_reg_2  = GalaxGPURegisterRead(GALAX_V1_MODE_REGISTER_2);
+ }
+ 
+ GalaxGPUv1Controller::~GalaxGPUv1Controller()
+@@ -59,6 +66,15 @@ void GalaxGPUv1Controller::SetLEDColorsDirect(unsigned char red, unsigned char g
+     GalaxGPURegisterWrite(GALAX_V1_RED_REGISTER, red);
+     GalaxGPURegisterWrite(GALAX_V1_GREEN_REGISTER, green);
+     GalaxGPURegisterWrite(GALAX_V1_BLUE_REGISTER, blue);
++
++    /*-----------------------------------------------------*\
++    | At least the RTX 3070 1-Click OC LHR (signature 0x11) |
++    | only pushes the colour registers to the LED when a    |
++    | mode register is written, so re-write the current     |
++    | mode after every colour update                        |
++    \*-----------------------------------------------------*/
++    GalaxGPURegisterWrite(GALAX_V1_MODE_REGISTER_1, mode_reg_1);
++    GalaxGPURegisterWrite(GALAX_V1_MODE_REGISTER_2, mode_reg_2);
+ }
+ 
+ void GalaxGPUv1Controller::SetLEDColorsEffect(unsigned char red, unsigned char green, unsigned char blue)
+@@ -66,6 +82,8 @@ void GalaxGPUv1Controller::SetLEDColorsEffect(unsigned char red, unsigned char g
+     GalaxGPURegisterWrite(GALAX_V1_RED_REGISTER, red);
+     GalaxGPURegisterWrite(GALAX_V1_GREEN_REGISTER, green);
+     GalaxGPURegisterWrite(GALAX_V1_BLUE_REGISTER, blue);
++    GalaxGPURegisterWrite(GALAX_V1_MODE_REGISTER_1, mode_reg_1);
++    GalaxGPURegisterWrite(GALAX_V1_MODE_REGISTER_2, mode_reg_2);
+ }
+ 
+ void GalaxGPUv1Controller::SetMode(unsigned char mode)
+@@ -73,23 +91,31 @@ void GalaxGPUv1Controller::SetMode(unsigned char mode)
+     switch(mode)
+     {
+     case 1:
+-        GalaxGPURegisterWrite(GALAX_V1_MODE_REGISTER_1, GALAX_V1_MODE_STATIC_VALUE_1);
+-        GalaxGPURegisterWrite(GALAX_V1_MODE_REGISTER_2, GALAX_V1_MODE_STATIC_VALUE_2);
++        mode_reg_1 = GALAX_V1_MODE_STATIC_VALUE_1;
++        mode_reg_2 = GALAX_V1_MODE_STATIC_VALUE_2;
++        GalaxGPURegisterWrite(GALAX_V1_MODE_REGISTER_1, mode_reg_1);
++        GalaxGPURegisterWrite(GALAX_V1_MODE_REGISTER_2, mode_reg_2);
+         break;
+ 
+     case 2:
+-        GalaxGPURegisterWrite(GALAX_V1_MODE_REGISTER_1, GALAX_V1_MODE_BREATHING_VALUE_1);
+-        GalaxGPURegisterWrite(GALAX_V1_MODE_REGISTER_2, GALAX_V1_MODE_BREATHING_VALUE_2);
++        mode_reg_1 = GALAX_V1_MODE_BREATHING_VALUE_1;
++        mode_reg_2 = GALAX_V1_MODE_BREATHING_VALUE_2;
++        GalaxGPURegisterWrite(GALAX_V1_MODE_REGISTER_1, mode_reg_1);
++        GalaxGPURegisterWrite(GALAX_V1_MODE_REGISTER_2, mode_reg_2);
+         break;
+ 
+     case 3:
+-        GalaxGPURegisterWrite(GALAX_V1_MODE_REGISTER_1, GALAX_V1_MODE_RAINBOW_VALUE_1);
+-        GalaxGPURegisterWrite(GALAX_V1_MODE_REGISTER_2, GALAX_V1_MODE_RAINBOW_VALUE_2);
++        mode_reg_1 = GALAX_V1_MODE_RAINBOW_VALUE_1;
++        mode_reg_2 = GALAX_V1_MODE_RAINBOW_VALUE_2;
++        GalaxGPURegisterWrite(GALAX_V1_MODE_REGISTER_1, mode_reg_1);
++        GalaxGPURegisterWrite(GALAX_V1_MODE_REGISTER_2, mode_reg_2);
+         break;
+ 
+     case 4:
+-        GalaxGPURegisterWrite(GALAX_V1_MODE_REGISTER_1, GALAX_V1_MODE_CYCLE_BREATHING_VALUE_1);
+-        GalaxGPURegisterWrite(GALAX_V1_MODE_REGISTER_2, GALAX_V1_MODE_CYCLE_BREATHING_VALUE_2);
++        mode_reg_1 = GALAX_V1_MODE_CYCLE_BREATHING_VALUE_1;
++        mode_reg_2 = GALAX_V1_MODE_CYCLE_BREATHING_VALUE_2;
++        GalaxGPURegisterWrite(GALAX_V1_MODE_REGISTER_1, mode_reg_1);
++        GalaxGPURegisterWrite(GALAX_V1_MODE_REGISTER_2, mode_reg_2);
+         break;
+ 
+     default:
+diff --git a/Controllers/GalaxGPUController/GalaxGPUv1Controller/GalaxGPUv1Controller.h b/Controllers/GalaxGPUController/GalaxGPUv1Controller/GalaxGPUv1Controller.h
+index a5f5e75..fb3f2a7 100644
+--- a/Controllers/GalaxGPUController/GalaxGPUv1Controller/GalaxGPUv1Controller.h
++++ b/Controllers/GalaxGPUController/GalaxGPUv1Controller/GalaxGPUv1Controller.h
+@@ -67,4 +67,6 @@ private:
+     i2c_smbus_interface *   bus;
+     galax_gpu_dev_id        dev;
+     std::string             name;
++    unsigned char           mode_reg_1;
++    unsigned char           mode_reg_2;
+ };
+diff --git a/pci_ids/pci_ids.h b/pci_ids/pci_ids.h
+index 08d0e92..5087005 100644
+--- a/pci_ids/pci_ids.h
++++ b/pci_ids/pci_ids.h
+@@ -592,6 +592,7 @@
+ #define KFA2_RTX_2080TI_EX_OC_SUB_DEV                           0x1323
+ #define GALAX_RTX_3080_SG_SUB_DEV                               0x1455
+ #define GALAX_RTX_3070_1_CLICK_OC_SUB_DEV  			0x146B
++#define GALAX_RTX_3070_1_CLICK_OC_LHR_SUB_DEV                   0x153A
+ #define KFA2_RTX_4080_SG_OC_SUB_DEV                             0x1795
+ #define GALAX_RTX_5070TI_EX_OC_SUB_DEV                          0x205C
+ 
+-- 
+2.53.0.windows.2
+
