@@ -38,6 +38,10 @@ The ID table also carries the two other v1 boards OpenRGB lists at 0x23 (RTX 307
 
 `ImageUrl()` points at the generic PNY GPU image for now because there is no GALAX asset yet.
 
+## Source and notes
+
+https://github.com/brunovbn/galax-rtx3070-rgb (plugin, stand-alone probe script, register dump, experiment log).
+
 ## Testing
 
 SignalRGB 2.5.74, Windows 11. Verified: detection and name in the Devices page, Forced colour (0,155,222) shows as light blue on the card, Canvas mode follows the active effect, device disable/enable, SignalRGB restart.

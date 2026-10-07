@@ -43,6 +43,10 @@ Without this, Direct mode would never update the LED on this board. For the othe
 
 Factory colour is (243, 245, 255) with mode registers `0x00` / `0x20`. The controller keeps its last state across reboots.
 
+## Source and notes
+
+https://github.com/brunovbn/galax-rtx3070-rgb (plugin, stand-alone probe script, register dump, experiment log).
+
 ## Testing
 
 Tested on Windows 11 with the board above through the NVAPI I2C path (NvAPI_I2CReadEx / NvAPI_I2CWriteEx, port 1), the same path OpenRGB uses on Windows. Colours and modes verified visually. I do not have other GALAX v1 boards to regression-test the mode re-write.
